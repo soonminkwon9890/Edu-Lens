@@ -1,0 +1,25 @@
+# Created by venv; see https://docs.python.org/3/library/venv.html
+# --- 환경 변수 (절대 유출 금지) ---
+.env
+.env.local
+.env.*.local
+
+# --- Python 관련 ---
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+current_screen.png
+
+# --- Node.js / Next.js 관련 ---
+node_modules/
+.next/
+out/
+build/
+.turbo/
+
+# --- 기타 환경 ---
+.DS_Store
+.vscode/
+.idea/

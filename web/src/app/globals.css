@@ -1,0 +1,115 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ── Geometry ─────────────────────────────────────────── */
+    --radius: 0.625rem;
+
+    /* ── EduLens Light Theme ─────────────────────────────── */
+    --background:    0 0% 100%;
+    --foreground:    240 10% 10%;
+
+    --card:          0 0% 100%;
+    --card-foreground: 240 10% 10%;
+
+    --popover:       0 0% 100%;
+    --popover-foreground: 240 10% 10%;
+
+    /* Primary — Intellectual Purple (#6366f1) */
+    --primary:         239 84% 67%;
+    --primary-foreground: 0 0% 100%;
+    --primary-muted:   239 84% 92%;
+
+    /* Secondary — Trustworthy Sky Blue (#0ea5e9) */
+    --secondary:       199 89% 48%;
+    --secondary-foreground: 0 0% 100%;
+    --secondary-muted: 199 89% 90%;
+
+    --muted:           240 5% 96%;
+    --muted-foreground: 240 4% 46%;
+
+    --accent:          239 84% 96%;
+    --accent-foreground: 239 84% 40%;
+
+    --destructive:     0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success:         142 71% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning:         38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --border:          240 6% 90%;
+    --input:           240 6% 90%;
+    --ring:            239 84% 67%;
+  }
+
+  .dark {
+    --background:    240 10% 7%;
+    --foreground:    0 0% 95%;
+
+    --card:          240 10% 10%;
+    --card-foreground: 0 0% 95%;
+
+    --popover:       240 10% 10%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary:         239 84% 67%;
+    --primary-foreground: 0 0% 100%;
+    --primary-muted:   239 40% 25%;
+
+    --secondary:       199 89% 48%;
+    --secondary-foreground: 0 0% 100%;
+    --secondary-muted: 199 50% 20%;
+
+    --muted:           240 5% 15%;
+    --muted-foreground: 240 5% 55%;
+
+    --accent:          239 40% 20%;
+    --accent-foreground: 239 84% 80%;
+
+    --destructive:     0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success:         142 71% 40%;
+    --success-foreground: 0 0% 100%;
+
+    --warning:         38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --border:          240 5% 18%;
+    --input:           240 5% 18%;
+    --ring:            239 84% 67%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Smooth scrolling */
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@layer utilities {
+  /* EduLens brand gradient text */
+  .text-edu-gradient {
+    @apply bg-edu-sky-gradient bg-clip-text text-transparent;
+  }
+
+  /* Focus ring using brand color */
+  .focus-ring {
+    @apply outline-none ring-2 ring-primary/50 ring-offset-2 ring-offset-background;
+  }
+}

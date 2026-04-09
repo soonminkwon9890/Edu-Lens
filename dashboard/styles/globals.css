@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-radar-bg text-radar-text;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { @apply bg-radar-bg; }
+::-webkit-scrollbar-thumb { @apply bg-radar-border rounded-full; }
+::-webkit-scrollbar-thumb:hover { @apply bg-radar-accent; }
