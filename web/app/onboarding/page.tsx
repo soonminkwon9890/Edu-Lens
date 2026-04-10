@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useUser, useClerk } from "@clerk/nextjs";
+import { useUser, useClerk, useSession } from "@clerk/nextjs";
 import { Aperture, Loader2, GraduationCap, Presentation } from "lucide-react";
 import { saveOnboarding } from "@/app/actions";
 
@@ -73,6 +73,7 @@ function RoleCard({ value, selected, icon, title, description, onSelect }: RoleC
 export default function OnboardingPage(): JSX.Element {
   const router        = useRouter();
   const { user }      = useUser();
+  const { session }   = useSession();
   const { signOut }   = useClerk();
 
   const [nickname,     setNickname]     = useState("");
@@ -97,12 +98,16 @@ export default function OnboardingPage(): JSX.Element {
         return;
       }
 
-      // Force Clerk to issue a fresh JWT that includes the new role so the
-      // middleware won't redirect back to /onboarding on the next navigation.
+      // 1. Sync local user object with the server-side publicMetadata update.
       await user?.reload();
-
-      router.push(result.role === "instructor" ? "/admin" : "/");
+      // 2. Force Clerk to mint a new JWT that contains the updated role and
+      //    write it to the session cookie — without this, the middleware reads
+      //    the OLD cached token and may redirect back to /onboarding.
+      await session?.getToken({ skipCache: true });
+      // 3. Tell Next.js Server Components to re-render with the fresh token,
+      //    then soft-navigate (no full page reload / flash).
       router.refresh();
+      router.push(result.role === "instructor" ? "/admin" : "/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "저장에 실패했습니다. 다시 시도해 주세요.");
     } finally {
