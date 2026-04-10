@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useClerk } from "@clerk/nextjs";
+import { useUser, useClerk } from "@clerk/nextjs";
 import { Aperture, Loader2, GraduationCap, Presentation } from "lucide-react";
 import { saveOnboarding } from "@/app/actions";
 
@@ -71,34 +71,49 @@ function RoleCard({ value, selected, icon, title, description, onSelect }: RoleC
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function OnboardingPage(): JSX.Element {
-  const router   = useRouter();
-  const { session } = useClerk();
+  const router        = useRouter();
+  const { user }      = useUser();
+  const { signOut }   = useClerk();
 
-  const [nickname,   setNickname]   = useState("");
-  const [role,       setRole]       = useState<Role | null>(null);
-  const [error,      setError]      = useState<string | null>(null);
-  const [isPending,  startTransition] = useTransition();
+  const [nickname,     setNickname]     = useState("");
+  const [role,         setRole]         = useState<Role | null>(null);
+  const [error,        setError]        = useState<string | null>(null);
+  const [isLoading,    setIsLoading]    = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
-  const canSubmit = nickname.trim().length > 0 && role !== null && !isPending;
+  const canSubmit = nickname.trim().length > 0 && role !== null && !isLoading && !isCancelling;
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit || !role) return;
 
     setError(null);
-    startTransition(async () => {
-      try {
-        await saveOnboarding({ nickname: nickname.trim(), role });
+    setIsLoading(true);
+    try {
+      const result = await saveOnboarding({ nickname: nickname.trim(), role });
 
-        // Force Clerk to issue a fresh JWT that includes the new role so the
-        // middleware won't redirect back to /onboarding on the next navigation.
-        await session?.reload();
-
-        router.replace(role === "instructor" ? "/admin" : "/");
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "저장에 실패했습니다. 다시 시도해 주세요.");
+      if (!result.success) {
+        setError(result.error);
+        return;
       }
-    });
+
+      // Force Clerk to issue a fresh JWT that includes the new role so the
+      // middleware won't redirect back to /onboarding on the next navigation.
+      await user?.reload();
+
+      router.push(result.role === "instructor" ? "/admin" : "/");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "저장에 실패했습니다. 다시 시도해 주세요.");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleCancel() {
+    setIsCancelling(true);
+    await signOut();
+    router.push("/sign-in");
   }
 
   return (
@@ -191,13 +206,33 @@ export default function OnboardingPage(): JSX.Element {
                      transition-all active:scale-[0.98]
                      disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
         >
-          {isPending ? (
+          {isLoading ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
               저장 중…
             </>
           ) : (
             "에듀렌즈 시작하기 →"
+          )}
+        </button>
+
+        {/* Cancel / escape hatch */}
+        <button
+          type="button"
+          onClick={handleCancel}
+          disabled={isLoading || isCancelling}
+          className="w-full flex items-center justify-center gap-2 rounded-xl
+                     border border-border py-2.5 text-sm text-muted-foreground
+                     hover:bg-accent hover:text-foreground transition-colors
+                     disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {isCancelling ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              로그아웃 중…
+            </>
+          ) : (
+            "취소 및 처음으로 돌아가기"
           )}
         </button>
       </form>

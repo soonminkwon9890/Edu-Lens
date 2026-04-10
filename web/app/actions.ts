@@ -130,33 +130,68 @@ export async function createSession(category: string): Promise<SessionResult> {
  * caller should invoke `session.reload()` from useClerk() to force a fresh
  * JWT before navigating away, otherwise the middleware will redirect back.
  */
+// ── Onboarding result discriminated union ────────────────────────────────────
+
+export type OnboardingResult =
+  | { success: true;  role: "instructor" | "student" }
+  | { success: false; error: string };
+
+/**
+ * Save nickname + role for users who signed up via OAuth and bypassed the
+ * custom sign-up form.
+ *
+ * Returns a plain result object instead of throwing so the client component
+ * can handle errors without losing control of its loading state.
+ *
+ * Steps:
+ *   1. Validate inputs server-side.
+ *   2. Call Clerk's `updateUserMetadata` to write { role, nickname } into
+ *      publicMetadata — the JWT carries these on the next refresh.
+ *   3. Upsert the Supabase `profiles` row (idempotent; handles the race where
+ *      the webhook already created the row before onboarding completed).
+ */
 export async function saveOnboarding(data: {
   nickname: string;
   role:     "instructor" | "student";
-}): Promise<void> {
+}): Promise<OnboardingResult> {
   const { userId } = await auth();
-  if (!userId) throw new Error("Unauthorized");
+  if (!userId) return { success: false, error: "인증되지 않은 사용자입니다." };
 
   const { nickname, role } = data;
+  const trimmed = nickname.trim();
 
-  if (!nickname.trim()) throw new Error("닉네임을 입력해 주세요.");
-  if (role !== "instructor" && role !== "student") throw new Error("올바른 역할을 선택해 주세요.");
+  if (!trimmed)                                    return { success: false, error: "닉네임을 입력해 주세요." };
+  if (role !== "instructor" && role !== "student") return { success: false, error: "올바른 역할을 선택해 주세요." };
 
-  // 1. Update Clerk publicMetadata
-  const clerk = await clerkClient();
-  await clerk.users.updateUserMetadata(userId, {
-    publicMetadata: { role, nickname: nickname.trim() },
-  });
+  try {
+    // 1. Write role + nickname into Clerk publicMetadata.
+    //    The JWT will carry these fields after the client calls user.reload().
+    const clerk = await clerkClient();
+    await clerk.users.updateUserMetadata(userId, {
+      publicMetadata: { role, nickname: trimmed },
+    });
 
-  // 2. Upsert Supabase profile (idempotent on re-submission)
-  const { error } = await supabaseAdmin
-    .from("profiles")
-    .upsert(
-      { id: userId, role, nickname: nickname.trim() },
-      { onConflict: "id" },
-    );
+    // 2. Upsert the profiles row — safe to re-run if the webhook already fired.
+    const { error: dbError } = await supabaseAdmin
+      .from("profiles")
+      .upsert(
+        { id: userId, role, nickname: trimmed },
+        { onConflict: "id" },
+      );
 
-  if (error) throw new Error(error.message);
+    if (dbError) {
+      console.error("[saveOnboarding] Supabase upsert failed:", dbError.message);
+      return { success: false, error: "프로필 저장에 실패했습니다. 잠시 후 다시 시도해 주세요." };
+    }
 
-  revalidatePath("/");
+    revalidatePath("/");
+    return { success: true, role };
+
+  } catch (err) {
+    console.error("[saveOnboarding] Unexpected error:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.",
+    };
+  }
 }
