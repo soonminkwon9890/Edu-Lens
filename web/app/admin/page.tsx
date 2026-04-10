@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { useUser, RedirectToSignIn } from "@clerk/nextjs";
+import { useUser, RedirectToSignIn, UserButton } from "@clerk/nextjs";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
 import { supabase } from "@/lib/supabase";
@@ -300,6 +300,7 @@ export default function AdminPage(): JSX.Element {
               수강생 {records.length}명
             </span>
             <LiveDot connected={connected} />
+            <UserButton afterSignOutUrl="/sign-in" />
           </div>
         </div>
       </div>

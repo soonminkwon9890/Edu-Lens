@@ -1,6 +1,6 @@
 "use server";
 
-import { auth } from "@clerk/nextjs/server";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
 import { supabaseAdmin } from "@/lib/supabase-server";
 
@@ -114,4 +114,49 @@ export async function createSession(category: string): Promise<SessionResult> {
   }
 
   return { sessionId: newSession.id as string, mentorId };
+}
+
+// ── Onboarding ────────────────────────────────────────────────────────────────
+
+/**
+ * Save nickname + role for a user who signed up via OAuth (Google/GitHub)
+ * and therefore bypassed the custom sign-up form.
+ *
+ * 1. Updates Clerk publicMetadata so the JWT carries the role on the next
+ *    refresh (sessionClaims.metadata.role / .nickname).
+ * 2. Upserts the Supabase profiles row so the rest of the app can query it.
+ *
+ * Called by the /onboarding client component.  After this resolves, the
+ * caller should invoke `session.reload()` from useClerk() to force a fresh
+ * JWT before navigating away, otherwise the middleware will redirect back.
+ */
+export async function saveOnboarding(data: {
+  nickname: string;
+  role:     "instructor" | "student";
+}): Promise<void> {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  const { nickname, role } = data;
+
+  if (!nickname.trim()) throw new Error("닉네임을 입력해 주세요.");
+  if (role !== "instructor" && role !== "student") throw new Error("올바른 역할을 선택해 주세요.");
+
+  // 1. Update Clerk publicMetadata
+  const clerk = await clerkClient();
+  await clerk.users.updateUserMetadata(userId, {
+    publicMetadata: { role, nickname: nickname.trim() },
+  });
+
+  // 2. Upsert Supabase profile (idempotent on re-submission)
+  const { error } = await supabaseAdmin
+    .from("profiles")
+    .upsert(
+      { id: userId, role, nickname: nickname.trim() },
+      { onConflict: "id" },
+    );
+
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/");
 }

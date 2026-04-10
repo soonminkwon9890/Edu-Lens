@@ -2,65 +2,44 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 
 import "@/app/globals.css";
-import { Navbar } from "@/components/layout/navbar";
-import { Footer } from "@/components/layout/footer";
 import { Providers } from "@/app/providers";
 
-// ── Fonts ────────────────────────────────────────────────────────────────
+// ── Fonts ─────────────────────────────────────────────────────────────────────
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-sans",
   display: "swap",
 });
 
-// ── Metadata ─────────────────────────────────────────────────────────────
+// ── Metadata ──────────────────────────────────────────────────────────────────
 export const metadata: Metadata = {
   title: {
-    default: "EduLens — The lens that clarifies education",
+    default:  "EduLens",
     template: "%s | EduLens",
   },
   description:
-    "EduLens is an AI-powered educational assistant that detects coding stalls in real time and guides students with Socratic hints — so instructors can focus on teaching.",
-  keywords: [
-    "education",
-    "AI tutor",
-    "coding assistant",
-    "learning analytics",
-    "VS Code",
-    "PyCharm",
-  ],
-  authors: [{ name: "EduLens Team" }],
-  openGraph: {
-    type: "website",
-    locale: "en_US",
-    title: "EduLens — The lens that clarifies education",
-    description:
-      "Real-time AI diagnostics for students, live oversight for instructors.",
-    siteName: "EduLens",
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "EduLens",
-    description: "The lens that clarifies education.",
-  },
-  robots: { index: true, follow: true },
+    "EduLens is an AI-powered educational assistant that detects coding stalls in real time and guides students with Socratic hints.",
+  authors:  [{ name: "EduLens Team" }],
+  robots:   { index: true, follow: true },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#7c5cfc",
-  width: "device-width",
+  themeColor:   "#7c5cfc",
+  width:        "device-width",
   initialScale: 1,
 };
 
-// ── Root Layout ───────────────────────────────────────────────────────────
+// ── Root Layout ───────────────────────────────────────────────────────────────
+// The global Navbar/Footer are intentionally removed — every app section
+// (student dashboard, admin radar, sign-in, onboarding) provides its own
+// context-appropriate header with a <UserButton /> for logout.
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ko" className={inter.variable} suppressHydrationWarning>
-      <body className="min-h-screen flex flex-col bg-background text-foreground">
+      <body className="min-h-screen bg-background text-foreground antialiased">
         <Providers>
-          {/* Skip-to-content for accessibility */}
           <a
             href="#main-content"
             className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4
@@ -69,14 +48,9 @@ export default function RootLayout({
           >
             Skip to content
           </a>
-
-          <Navbar />
-
-          <main id="main-content" className="flex-1">
+          <main id="main-content" className="min-h-screen">
             {children}
           </main>
-
-          <Footer />
         </Providers>
       </body>
     </html>
