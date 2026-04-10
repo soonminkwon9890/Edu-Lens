@@ -9,6 +9,7 @@ import uuid
 import datetime
 from dataclasses import dataclass
 from enum import Enum
+from urllib.parse import urlparse, parse_qs
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -229,6 +230,98 @@ class WindowCapture:
     y:      int           # window top edge,  logical screen pixels
     width:  int           # logical width
     height: int           # logical height
+
+
+# ---------------------------------------------------------------------------
+# Launch context — parsed from edulens:// URI or environment variables
+# ---------------------------------------------------------------------------
+
+@dataclass
+class LaunchContext:
+    """
+    Identity parameters for the current run.
+
+    When launched via `edulens://launch?...` (browser → custom URI scheme),
+    the web dashboard pre-creates an active_sessions row and passes its id
+    here so the desktop agent can log stall events against the correct row
+    without creating a duplicate session.
+
+    When launched directly (python main.py) the fields fall back to
+    environment variables or auto-generated values.
+    """
+    student_id: str
+    mentor_id:  str
+    category:   str
+    session_id: str   # may be empty string when launched directly
+
+
+def _make_default_context() -> LaunchContext:
+    """Read defaults from environment variables (evaluated once at launch)."""
+    return LaunchContext(
+        student_id=os.getenv("EDU_LENS_STUDENT_ID", f"student_{uuid.uuid4().hex[:6]}"),
+        mentor_id=os.getenv("EDU_LENS_MENTOR_ID",   ""),
+        category=os.getenv("EDU_LENS_TOOL_NAME",    "edu-lens"),
+        session_id="",
+    )
+
+
+def parse_launch_uri(uri: str) -> LaunchContext:
+    """
+    Parse an  edulens://launch?category=…&student_id=…&mentor_id=…&session_id=…
+    URI and return a LaunchContext.
+
+    Missing query params fall back to environment-variable defaults so the
+    app always has usable values regardless of which params the web UI sent.
+    """
+    parsed = urlparse(uri)
+    if parsed.scheme.lower() != "edulens":
+        raise ValueError(f"Not an edulens:// URI: {uri!r}")
+
+    qs = parse_qs(parsed.query)
+    defaults = _make_default_context()
+
+    def _first(key: str, default: str) -> str:
+        return qs.get(key, [default])[0]
+
+    return LaunchContext(
+        student_id=_first("student_id", defaults.student_id),
+        mentor_id=_first("mentor_id",   defaults.mentor_id),
+        category=_first("category",    defaults.category),
+        session_id=_first("session_id", ""),
+    )
+
+
+def get_launch_context() -> LaunchContext:
+    """
+    Return a LaunchContext from sys.argv or environment variables.
+
+    On Windows the OS registry handler launches Python as:
+        python main.py "edulens://launch?..."
+    so the URI is directly in sys.argv[1].
+
+    On macOS the register_protocol.py script creates an AppleScript .app
+    whose `open location` handler invokes:
+        python main.py "$URL"
+    achieving the same result.
+
+    If no URI is present (direct launch), fall back to env vars.
+    """
+    if len(sys.argv) >= 2:
+        arg = sys.argv[1].strip()
+        if arg.lower().startswith("edulens://"):
+            print(f"[Launch] URI detected: {arg}")
+            try:
+                ctx = parse_launch_uri(arg)
+                print(
+                    f"[Launch] student_id={ctx.student_id!r}  "
+                    f"mentor_id={ctx.mentor_id!r}  "
+                    f"category={ctx.category!r}  "
+                    f"session_id={ctx.session_id!r}"
+                )
+                return ctx
+            except Exception as exc:
+                print(f"[Launch] URI parse failed ({exc}). Using env defaults.")
+    return _make_default_context()
 
 
 def _frontmost_window_bounds_macos() -> tuple[str, int, int, int, int] | None:
@@ -493,9 +586,10 @@ def capture_and_analyze(
 # Supabase backend
 # ---------------------------------------------------------------------------
 
-STORAGE_BUCKET = "student-snapshots"
-LOGS_TABLE = "practice_logs"
-CRITICAL_THRESHOLD = 3  # triggers per context before status → 'critical'
+STORAGE_BUCKET     = "student-snapshots"
+SESSIONS_TABLE     = "active_sessions"
+LOGS_TABLE         = "practice_logs"
+CRITICAL_THRESHOLD = 3  # log entries per session before status → 'critical'
 
 
 def init_supabase() -> SupabaseClient:
@@ -524,53 +618,104 @@ def _upload_screenshot(sb: SupabaseClient, local_path: str, student_id: str) -> 
     return public_url
 
 
-def _count_recent_stalls(sb: SupabaseClient, student_id: str, tool_name: str) -> int:
+def _get_or_create_session(
+    sb: SupabaseClient,
+    student_id: str,
+    mentor_id: str,
+    category: str,
+) -> tuple[str, int]:
     """
-    Count how many stall events exist for this (student_id, tool_name) pair,
-    regardless of their current status.  Used to decide if the *new* record
-    should be marked 'critical'.
+    Return the (session_id, prior_log_count) for the current active session.
+
+    Looks for the most-recent non-resolved active_sessions row for this
+    (student_id, category) pair.  Creates a fresh 'active' row when none
+    exists.  The prior_log_count drives the stalled → critical escalation.
     """
-    response = (
-        sb.table(LOGS_TABLE)
-        .select("id", count="exact")
+    existing = (
+        sb.table(SESSIONS_TABLE)
+        .select("id")
         .eq("student_id", student_id)
-        .eq("tool_name", tool_name)
-        .in_("status", ["stalled", "critical"])
+        .eq("category", category)
+        .in_("status", ["active", "stalled", "critical"])
+        .order("started_at", desc=True)
+        .limit(1)
         .execute()
     )
-    return response.count or 0
+
+    if existing.data:
+        session_id: str = existing.data[0]["id"]
+    else:
+        new_session = (
+            sb.table(SESSIONS_TABLE)
+            .insert({
+                "student_id": student_id,
+                "mentor_id":  mentor_id,
+                "category":   category,
+                "status":     "active",
+            })
+            .execute()
+        )
+        session_id = new_session.data[0]["id"]
+
+    # Count existing log entries for this session to determine escalation.
+    count_resp = (
+        sb.table(LOGS_TABLE)
+        .select("id", count="exact")
+        .eq("session_id", session_id)
+        .execute()
+    )
+    prior_count: int = count_resp.count or 0
+
+    return session_id, prior_count
 
 
 def save_stall_event(
     sb: SupabaseClient,
     student_id: str,
-    tool_name: str,
+    mentor_id: str,
+    category: str,
+    error_type: str,
     ai_hint: str,
     screenshot_path: str,
 ) -> dict:
     """
-    Upload the screenshot, determine the appropriate status, and insert a
-    record into `practice_logs`.  Returns the inserted row dict.
+    Persist one Gemini stall detection to Supabase.
+
+    Steps:
+      1. Get or create the active_sessions row for (student_id, category).
+      2. Upload the screenshot to Storage.
+      3. Escalate session status based on total log count (stalled → critical
+         once CRITICAL_THRESHOLD entries exist for this session).
+      4. UPDATE active_sessions.status.
+      5. INSERT a practice_logs row (immutable event entry).
+
+    Returns the inserted practice_logs row dict with an extra '_status' key
+    carrying the new session status so the caller can surface it in the UI.
     """
+    session_id, prior_count = _get_or_create_session(
+        sb, student_id, mentor_id, category
+    )
     screenshot_url = _upload_screenshot(sb, screenshot_path, student_id)
 
-    prior_count = _count_recent_stalls(sb, student_id, tool_name)
-    # The new record will be the (prior_count + 1)-th trigger.
-    status = "critical" if (prior_count + 1) >= CRITICAL_THRESHOLD else "stalled"
+    # The new log will be the (prior_count + 1)-th entry for this session.
+    new_status = "critical" if (prior_count + 1) >= CRITICAL_THRESHOLD else "stalled"
+
+    sb.table(SESSIONS_TABLE).update({"status": new_status}).eq("id", session_id).execute()
 
     row = {
-        "student_id": student_id,
-        "tool_name": tool_name,
-        "ai_hint": ai_hint,
+        "student_id":     student_id,
+        "session_id":     session_id,
+        "error_type":     error_type,
+        "ai_hint":        ai_hint,
         "screenshot_url": screenshot_url,
-        "status": status,
     }
+    result  = sb.table(LOGS_TABLE).insert(row).execute()
+    inserted: dict = result.data[0] if result.data else row
+    inserted["_status"] = new_status  # carry status back to the caller
 
-    result = sb.table(LOGS_TABLE).insert(row).execute()
-    inserted = result.data[0] if result.data else row
     print(
-        f"[Supabase] Logged event — student={student_id}, "
-        f"tool={tool_name}, status={status}"
+        f"[Supabase] Stall logged — student={student_id}, "
+        f"category={category}, status={new_status}"
     )
     return inserted
 
@@ -578,18 +723,22 @@ def save_stall_event(
 def save_resolve_event(
     sb: SupabaseClient,
     student_id: str,
-    tool_name: str,
+    category: str,
 ) -> None:
-    """Insert a 'resolved' log row to signal the student fixed the stall."""
-    row = {
-        "student_id": student_id,
-        "tool_name": tool_name,
-        "ai_hint": "",
-        "screenshot_url": "",
-        "status": "resolved",
-    }
-    sb.table(LOGS_TABLE).insert(row).execute()
-    print(f"[Supabase] Resolved — student={student_id}, tool={tool_name}")
+    """
+    Mark the current session as resolved.
+
+    Updates active_sessions.status → 'resolved' for the most-recent
+    non-resolved session of this (student_id, category) pair.
+    No practice_logs row is inserted — resolution is a session-level state
+    change, not a new event entry.
+    """
+    sb.table(SESSIONS_TABLE).update({"status": "resolved"}).eq(
+        "student_id", student_id
+    ).eq("category", category).in_(
+        "status", ["active", "stalled", "critical"]
+    ).execute()
+    print(f"[Supabase] Session resolved — student={student_id}, category={category}")
 
 
 # ---------------------------------------------------------------------------
@@ -1680,13 +1829,17 @@ CHAR_STYLE_FOCUS = """
 
 
 class EduLensCharacter(QWidget):
-    def __init__(self):
+    def __init__(self, ctx: LaunchContext):
         super().__init__()
         self.model = init_gemini()
         self.sb = init_supabase()
-        # Read identity from env; fall back to a generated ID
-        self.student_id: str = os.getenv("EDU_LENS_STUDENT_ID", f"student_{uuid.uuid4().hex[:6]}")
-        self.tool_name: str = os.getenv("EDU_LENS_TOOL_NAME", "edu-lens")
+        # Identity from launch context (URI params or env-var fallbacks)
+        self.student_id: str       = ctx.student_id
+        self.mentor_id:  str       = ctx.mentor_id
+        self.tool_name:  str       = ctx.category
+        # session_id is pre-created by the web dashboard when launched via URI.
+        # Updated from the first stall log when launched directly.
+        self.session_id: str | None = ctx.session_id or None
 
         self._busy = False
         self._hint_win: SocraticHintPanel | None = None
@@ -1719,8 +1872,43 @@ class EduLensCharacter(QWidget):
         self.label.setStyleSheet(CHAR_STYLE_IDLE)
         self.label.adjustSize()
         self.resize(self.label.sizeHint())
+
+        # ── Close button (top-right corner, absolute position) ────────────
+        self._close_btn = QPushButton("✕", self)
+        self._close_btn.setFixedSize(22, 22)
+        self._close_btn.setToolTip("앱 닫기 (세션 종료)")
+        self._close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255, 255, 255, 100);
+                color: rgba(255, 255, 255, 200);
+                border: none;
+                border-radius: 11px;
+                font-size: 10px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #ff4444;
+                color: white;
+            }
+            QPushButton:pressed {
+                background-color: #cc2222;
+                color: white;
+            }
+        """)
+        self._close_btn.clicked.connect(self._resolve_and_quit)
+        self._close_btn.raise_()   # keep on top of the label
+        self._reposition_close_btn()
+
         self.move(100, 100)
         self._oldPos = self.pos()
+
+    def _reposition_close_btn(self) -> None:
+        """Keep the close button pinned to the top-right corner."""
+        self._close_btn.move(self.width() - self._close_btn.width() - 2, 2)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._reposition_close_btn()
 
     # ── Dragging ──────────────────────────────────────────────────────────
 
@@ -1757,6 +1945,44 @@ class EduLensCharacter(QWidget):
     def _on_query_cancelled(self) -> None:
         self._input_box = None
 
+    # ── Close / session cleanup ───────────────────────────────────────────
+
+    def _resolve_and_quit(self) -> None:
+        """
+        Resolve the active session in Supabase, then quit the application.
+
+        Runs the Supabase update on a worker thread so the UI stays responsive
+        during the short network round-trip.  QApplication.quit() is called
+        from the worker thread once the update completes (or if it fails);
+        Qt posts the quit event to the main-thread event loop, so this is safe.
+        """
+        self.label.setText("👋\n닫는 중…")
+        self.label.setStyleSheet(CHAR_STYLE_BUSY)
+        self._close_btn.setEnabled(False)
+
+        def _cleanup() -> None:
+            try:
+                if self.session_id:
+                    # Direct update by ID — most precise path (URI launch or
+                    # after the first stall event populated session_id).
+                    self.sb.table(SESSIONS_TABLE).update(
+                        {"status": "resolved"}
+                    ).eq("id", self.session_id).execute()
+                    print(f"[Close] Session '{self.session_id}' → resolved.")
+                else:
+                    # Fallback: resolve by student_id + category when no
+                    # specific session ID is known (e.g. no stalls were logged
+                    # and the app was not launched via URI).
+                    save_resolve_event(
+                        self.sb, self.student_id, category=self.tool_name
+                    )
+            except Exception as exc:
+                print(f"[Close] Failed to resolve session on exit: {exc}")
+            finally:
+                QApplication.instance().quit()
+
+        threading.Thread(target=_cleanup, daemon=True).start()
+
     # ── Analysis flow ─────────────────────────────────────────────────────
 
     def _start_analysis(self, user_query: str = "") -> None:
@@ -1783,11 +2009,14 @@ class EduLensCharacter(QWidget):
             log_row = save_stall_event(
                 sb=self.sb,
                 student_id=self.student_id,
-                tool_name=self.tool_name,
+                mentor_id=self.mentor_id,
+                category=self.tool_name,
+                error_type=result.get("error_type", "unknown"),
                 ai_hint=result.get("hint_level_1", ""),
                 screenshot_path="current_screen.png",
             )
-            result["_log_status"] = log_row.get("status", "stalled")
+            result["_log_status"]  = log_row.get("_status",     "stalled")
+            result["_session_id"]  = log_row.get("session_id",  "")
 
             self._bridge.finished.emit(result)
 
@@ -1823,7 +2052,12 @@ class EduLensCharacter(QWidget):
             QTimer.singleShot(4000, self._reset_label)
             return
 
-        log_status = result.pop("_log_status", "stalled")
+        log_status  = result.pop("_log_status", "stalled")
+        new_session = result.pop("_session_id", None)
+        # Latch session_id from the first stall log so the close-button
+        # cleanup and resolve path always know which row to update.
+        if new_session and not self.session_id:
+            self.session_id = new_session
         print("진단 결과:", json.dumps(result, ensure_ascii=False, indent=2))
 
         # Draw highlight overlay — map 0-1000 Gemini coords → real pixels
@@ -1904,10 +2138,17 @@ class EduLensCharacter(QWidget):
 
     def _run_resolve(self):
         try:
-            save_resolve_event(self.sb, self.student_id, self.tool_name)
+            if self.session_id:
+                # Precise update — avoids touching other sessions for this student.
+                self.sb.table(SESSIONS_TABLE).update(
+                    {"status": "resolved"}
+                ).eq("id", self.session_id).execute()
+                print(f"[Supabase] Session '{self.session_id}' → resolved.")
+            else:
+                save_resolve_event(self.sb, self.student_id, category=self.tool_name)
             self._bridge.resolve_done.emit()
         except Exception as e:
-            print(f"[Supabase] resolve log failed: {e}")
+            print(f"[Supabase] resolve event failed: {e}")
 
     def _on_resolve_done(self):
         print("[Supabase] Resolve event logged successfully.")
@@ -1924,6 +2165,7 @@ class EduLensCharacter(QWidget):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setFont(QFont("Segoe UI", 10))
-    ex = EduLensCharacter()
+    ctx = get_launch_context()
+    ex  = EduLensCharacter(ctx)
     ex.show()
     sys.exit(app.exec())

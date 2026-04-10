@@ -57,7 +57,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={inter.variable} suppressHydrationWarning>
+    <html lang="ko" className={inter.variable} suppressHydrationWarning>
       <body className="min-h-screen flex flex-col bg-background text-foreground">
         <Providers>
           {/* Skip-to-content for accessibility */}

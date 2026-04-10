@@ -61,7 +61,7 @@ export function Navbar() {
         {/* ── Desktop CTA ───────────────────────────────────────────── */}
         <div className="hidden md:flex items-center gap-3">
           <Button variant="ghost" size="sm" asChild>
-            <Link href="/login">로그인</Link>
+            <Link href="/sign-in">로그인</Link>
           </Button>
           <Button variant="glow" size="sm" asChild>
             <Link href="/dashboard">대시보드 시작하기</Link>
@@ -111,7 +111,7 @@ export function Navbar() {
 
             <li className="mt-3 pt-3 border-t border-border/50 flex flex-col gap-2">
               <Button variant="outline" size="sm" asChild className="w-full">
-                <Link href="/login" onClick={() => setMobileOpen(false)}>
+                <Link href="/sign-in" onClick={() => setMobileOpen(false)}>
                   로그인
                 </Link>
               </Button>
