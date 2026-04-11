@@ -4,7 +4,12 @@ import { useState } from "react";
 import { Loader2, Rocket, Square } from "lucide-react";
 import { createSession, resolveSession } from "@/app/actions";
 import { cn } from "@/lib/utils";
-import WebEduLensCapture from "@/components/WebEduLensCapture";
+import dynamic from "next/dynamic";
+
+const WebEduLensCapture = dynamic(
+  () => import("@/components/WebEduLensCapture"),
+  { ssr: false },
+);
 
 // ── Category definitions ──────────────────────────────────────────────────────
 
