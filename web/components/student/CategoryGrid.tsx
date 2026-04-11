@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, Rocket } from "lucide-react";
-import { createSession } from "@/app/actions";
+import { Loader2, Rocket, Square } from "lucide-react";
+import { createSession, resolveSession } from "@/app/actions";
 import { cn } from "@/lib/utils";
+import WebEduLensCapture from "@/components/WebEduLensCapture";
 
 // ── Category definitions ──────────────────────────────────────────────────────
 
@@ -78,12 +79,19 @@ export const CATEGORIES = [
 
 export type CategoryId = (typeof CATEGORIES)[number]["id"];
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface CaptureSession {
+  categoryId:    string;
+  sessionId:     string;
+  categoryLabel: string;
+}
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface CategoryGridProps {
   userId:   string;
   mentorId: string | null;
-  /** Called when a launch is attempted but no mentor is set. */
   onNoMentor: () => void;
   /** Category IDs that already have a non-resolved session (from server). */
   activeCategoryIds?: string[];
@@ -97,98 +105,122 @@ export default function CategoryGrid({
   onNoMentor,
   activeCategoryIds = [],
 }: CategoryGridProps): JSX.Element {
-  const [loadingId,    setLoadingId]    = useState<string | null>(null);
-  const [launchError,  setLaunchError]  = useState<string | null>(null);
-  const [justLaunched, setJustLaunched] = useState<string | null>(null);
-  // Merge server-provided active IDs with any newly launched this session
-  const [localActive,  setLocalActive]  = useState<Set<string>>(
+  const [loadingId,      setLoadingId]      = useState<string | null>(null);
+  const [stoppingId,     setStoppingId]     = useState<string | null>(null);
+  const [launchError,    setLaunchError]    = useState<string | null>(null);
+  // The currently live capture session (at most one at a time)
+  const [captureSession, setCaptureSession] = useState<CaptureSession | null>(null);
+  // Badge set: categoryIds with an open DB session (server-persisted + newly started)
+  const [activeBadges,   setActiveBadges]   = useState<Set<string>>(
     () => new Set(activeCategoryIds),
   );
 
-  async function handleLaunch(categoryId: string): Promise<void> {
-    // Gate: must have a mentor before launching
-    if (!mentorId) {
-      onNoMentor();
-      return;
-    }
+  // ── Start a session + mount capture widget ─────────────────────────────────
+
+  async function handleLaunch(categoryId: string, categoryLabel: string): Promise<void> {
+    if (!mentorId) { onNoMentor(); return; }
+    if (captureSession) return; // one session at a time
 
     setLoadingId(categoryId);
     setLaunchError(null);
 
     try {
-      const { sessionId, mentorId: mid } = await createSession(categoryId);
+      const { sessionId } = await createSession(categoryId);
 
-      // ── Trigger the custom URI scheme ──────────────────────────────────
-      // The desktop agent (main.py) registers `edulens://` on install.
-      // URL params give it everything it needs to start the session.
-      const uri = [
-        "edulens://launch",
-        `?category=${encodeURIComponent(categoryId)}`,
-        `&student_id=${encodeURIComponent(userId)}`,
-        `&mentor_id=${encodeURIComponent(mid)}`,
-        `&session_id=${encodeURIComponent(sessionId)}`,
-      ].join("");
-
-      window.location.href = uri;
-
-      // Mark as active persistently + show brief launched flash
-      setLocalActive((prev) => new Set(prev).add(categoryId));
-      setJustLaunched(categoryId);
-      setTimeout(() => setJustLaunched(null), 3000);
+      setActiveBadges((prev) => new Set(prev).add(categoryId));
+      setCaptureSession({ categoryId, sessionId, categoryLabel });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg === "MENTOR_NOT_SET") {
         onNoMentor();
       } else {
-        setLaunchError(
-          "앱 실행에 실패했습니다. 에듀렌즈 앱이 설치되어 있는지 확인해 주세요.",
-        );
+        setLaunchError("세션 시작에 실패했습니다. 잠시 후 다시 시도해 주세요.");
       }
     } finally {
       setLoadingId(null);
     }
   }
 
+  // ── Stop: resolve session in DB + unmount widget ───────────────────────────
+
+  async function handleStop(): Promise<void> {
+    if (!captureSession) return;
+
+    const { categoryId, sessionId } = captureSession;
+    setStoppingId(categoryId);
+
+    try {
+      await resolveSession(sessionId);
+    } catch (err) {
+      // Non-fatal: DB resolve failed but we still unmount the widget
+      console.error("[CategoryGrid] resolveSession error:", err);
+    } finally {
+      setActiveBadges((prev) => {
+        const next = new Set(prev);
+        next.delete(categoryId);
+        return next;
+      });
+      setCaptureSession(null);
+      setStoppingId(null);
+    }
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+
   return (
     <div className="space-y-4">
-      {/* ── Section header ────────────────────────────────────────────── */}
+
+      {/* ── Section header ──────────────────────────────────────────────── */}
       <div className="flex items-center gap-2">
         <Rocket className="h-4 w-4 text-lens-400" />
         <h2 className="text-sm font-semibold text-muted-foreground tracking-wide uppercase">
           학습 카테고리
         </h2>
         <span className="ml-1 text-xs text-muted-foreground/60">
-          — 카드를 클릭하면 에듀렌즈 앱이 실행됩니다
+          — 카드를 클릭하면 AI 화면 감지가 시작됩니다
         </span>
       </div>
 
-      {/* ── Category cards grid ───────────────────────────────────────── */}
+      {/* ── Category cards grid ──────────────────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {CATEGORIES.map((cat) => {
-          const isLoading  = loadingId    === cat.id;
-          const isLaunched = justLaunched === cat.id;
-          const isActive   = localActive.has(cat.id);
+          const isLoading   = loadingId      === cat.id;
+          const isStopping  = stoppingId     === cat.id;
+          const isCapturing = captureSession?.categoryId === cat.id;
+          const isActive    = activeBadges.has(cat.id);
+          // Disable cards while another session is loading/capturing,
+          // but keep the capturing card itself clickable (to stop it).
+          const isDisabled  = (!!loadingId || (!!captureSession && !isCapturing)) && !isCapturing;
+
+          function handleClick() {
+            if (isDisabled) return;
+            if (isCapturing) {
+              void handleStop();
+            } else {
+              void handleLaunch(cat.id, cat.label);
+            }
+          }
 
           return (
             <button
               key={cat.id}
               type="button"
-              disabled={!!loadingId || isActive}
-              onClick={() => handleLaunch(cat.id)}
+              disabled={isDisabled || isStopping}
+              onClick={handleClick}
               className={cn(
                 "group relative text-left rounded-2xl border bg-card",
                 "p-5 transition-all duration-200",
                 "hover:-translate-y-0.5 hover:shadow-xl",
                 "active:scale-[0.98] active:translate-y-0",
-                "disabled:pointer-events-none",
+                "disabled:pointer-events-none disabled:opacity-50",
                 "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background",
                 cat.border,
                 cat.shadow,
-                isActive   && "ring-2 ring-emerald-500/40 border-emerald-500/40 opacity-80",
-                !isActive  && "disabled:opacity-60",
+                isCapturing && "ring-2 ring-emerald-500/50 border-emerald-500/50",
+                isActive && !isCapturing && "ring-1 ring-emerald-500/30 border-emerald-500/30 opacity-75",
               )}
             >
-              {/* Gradient background */}
+              {/* Gradient overlay */}
               <div
                 className={cn(
                   "absolute inset-0 rounded-2xl bg-gradient-to-br opacity-0",
@@ -199,23 +231,27 @@ export default function CategoryGrid({
               />
 
               <div className="relative z-10 flex flex-col gap-3 h-full">
-                {/* Top: icon + launch indicator */}
+                {/* Top row: icon + status badge */}
                 <div className="flex items-start justify-between">
                   <span className="text-3xl select-none" role="img" aria-label={cat.label}>
                     {cat.icon}
                   </span>
 
-                  {/* State indicator */}
-                  {isLoading ? (
+                  {/* State badge */}
+                  {isLoading || isStopping ? (
                     <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : isCapturing ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5
+                                     text-[10px] font-semibold text-emerald-400
+                                     bg-emerald-500/20 border border-emerald-500/30">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      감지 중
+                    </span>
                   ) : isActive ? (
-                    <span className={cn(
-                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5",
-                      "text-[10px] font-semibold text-emerald-400",
-                      "bg-emerald-500/20 border border-emerald-500/30",
-                      isLaunched && "animate-pulse",
-                    )}>
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5
+                                     text-[10px] font-semibold text-emerald-400/70
+                                     bg-emerald-500/10 border border-emerald-500/20">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/60" />
                       실행됨
                     </span>
                   ) : (
@@ -230,7 +266,7 @@ export default function CategoryGrid({
                   )}
                 </div>
 
-                {/* Labels */}
+                {/* Label + description */}
                 <div>
                   <p className="font-semibold text-foreground text-[15px] leading-tight mb-1">
                     {cat.label}
@@ -239,6 +275,15 @@ export default function CategoryGrid({
                     {cat.description}
                   </p>
                 </div>
+
+                {/* Stop hint — shown on hover when capturing */}
+                {isCapturing && (
+                  <div className="flex items-center gap-1.5 text-[11px] text-red-400/80
+                                   opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Square className="h-3 w-3 fill-current" />
+                    클릭하여 감지 중지
+                  </div>
+                )}
 
                 {/* Loading bar */}
                 {isLoading && (
@@ -252,23 +297,35 @@ export default function CategoryGrid({
         })}
       </div>
 
-      {/* ── Launch error ──────────────────────────────────────────────── */}
+      {/* ── Launch error ─────────────────────────────────────────────────── */}
       {launchError && (
         <div className="flex items-start gap-3 rounded-xl border border-destructive/30
                          bg-destructive/10 px-4 py-3">
           <span className="text-lg mt-0.5" role="img" aria-label="오류">⚠️</span>
           <div>
-            <p className="text-sm font-medium text-destructive">앱 실행 오류</p>
+            <p className="text-sm font-medium text-destructive">세션 시작 오류</p>
             <p className="text-xs text-muted-foreground mt-0.5">{launchError}</p>
           </div>
           <button
             type="button"
             onClick={() => setLaunchError(null)}
-            className="ml-auto shrink-0 text-muted-foreground hover:text-foreground transition-colors text-sm"
+            className="ml-auto shrink-0 text-muted-foreground hover:text-foreground
+                       transition-colors text-sm"
           >
             ✕
           </button>
         </div>
+      )}
+
+      {/* ── WebEduLensCapture widget (fixed position, renders globally) ── */}
+      {captureSession && (
+        <WebEduLensCapture
+          studentId={userId}
+          sessionId={captureSession.sessionId}
+          category={captureSession.categoryId}
+          categoryLabel={captureSession.categoryLabel}
+          onStop={handleStop}
+        />
       )}
     </div>
   );

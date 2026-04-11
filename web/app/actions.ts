@@ -116,6 +116,24 @@ export async function createSession(category: string): Promise<SessionResult> {
   return { sessionId: newSession.id as string, mentorId };
 }
 
+/**
+ * Mark an active session as resolved.
+ * Called when the student clicks "Stop" in the WebEduLensCapture widget.
+ */
+export async function resolveSession(sessionId: string): Promise<void> {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  const { error } = await supabaseAdmin
+    .from("active_sessions")
+    .update({ status: "resolved" })
+    .eq("id", sessionId)
+    .eq("student_id", userId); // safety: only the owning student can resolve
+
+  if (error) throw new Error(error.message);
+  revalidatePath("/");
+}
+
 // ── Onboarding ────────────────────────────────────────────────────────────────
 
 /**

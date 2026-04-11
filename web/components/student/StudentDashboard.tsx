@@ -101,7 +101,7 @@ export default function StudentDashboard({
             안녕하세요, <span className="text-lens-400">{nickname}</span>님 👋
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            오늘도 함께 성장해 봐요. 아래 카테고리를 선택하면 에듀렌즈 앱이 실행됩니다.
+            오늘도 함께 성장해 봐요. 카테고리를 선택하면 AI 화면 감지가 시작됩니다.
           </p>
         </section>
 
