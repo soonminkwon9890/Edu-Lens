@@ -160,7 +160,10 @@ export default function WebEduLensCapture({
 
     const res = await fetch(`${apiUrl}/analyze`, {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true",
+      },
       body: JSON.stringify({
         image_base64: b64,
         student_id:   studentId,
