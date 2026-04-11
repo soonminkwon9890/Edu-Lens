@@ -155,15 +155,9 @@ export default function WebEduLensCapture({
     requestType: "auto" | "manual",
     userPrompt?: string,
   ): Promise<ApiResponse> => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
-    if (!apiUrl) throw new Error("NEXT_PUBLIC_API_URL is not configured.");
-
-    const res = await fetch(`${apiUrl}/analyze`, {
+    const res = await fetch("/api/analyze", {
       method:  "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "ngrok-skip-browser-warning": "true",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         image_base64: b64,
         student_id:   studentId,
