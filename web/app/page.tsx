@@ -28,6 +28,17 @@ async function getStudentData(userId: string) {
     mentorNickname = (mentor as { nickname?: string } | null)?.nickname ?? null;
   }
 
+  // Fetch currently active (non-resolved) sessions to show persistent badges
+  const { data: activeSessions } = await supabaseAdmin
+    .from("active_sessions")
+    .select("category")
+    .eq("student_id", userId)
+    .in("status", ["active", "stalled", "critical"]);
+
+  const activeCategoryIds = (
+    (activeSessions as Array<{ category: string }>) ?? []
+  ).map((s) => s.category);
+
   // Fetch recent resolved sessions (last 5)
   // Join with practice_logs to get the latest error_type per session
   const { data: sessions } = await supabaseAdmin
@@ -60,7 +71,7 @@ async function getStudentData(userId: string) {
       }),
   );
 
-  return { nickname, mentorId, mentorNickname, recentSessions };
+  return { nickname, mentorId, mentorNickname, recentSessions, activeCategoryIds };
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -71,7 +82,7 @@ export default async function Page(): Promise<JSX.Element> {
   // Middleware should handle this, but guard defensively
   if (!userId) redirect("/sign-in");
 
-  const { nickname, mentorId, mentorNickname, recentSessions } =
+  const { nickname, mentorId, mentorNickname, recentSessions, activeCategoryIds } =
     await getStudentData(userId);
 
   return (
@@ -81,6 +92,7 @@ export default async function Page(): Promise<JSX.Element> {
       initialMentorId={mentorId}
       initialMentorNickname={mentorNickname}
       recentSessions={recentSessions}
+      activeCategoryIds={activeCategoryIds}
     />
   );
 }

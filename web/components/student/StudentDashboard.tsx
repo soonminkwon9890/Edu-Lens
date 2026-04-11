@@ -16,6 +16,7 @@ interface StudentDashboardProps {
   initialMentorId:      string | null;
   initialMentorNickname: string | null;
   recentSessions:       ResolvedSession[];
+  activeCategoryIds:    string[];
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -26,6 +27,7 @@ export default function StudentDashboard({
   initialMentorId,
   initialMentorNickname,
   recentSessions,
+  activeCategoryIds,
 }: StudentDashboardProps): JSX.Element {
   const [mentorId,       setMentorId]       = useState<string | null>(initialMentorId);
   const [mentorNickname, setMentorNickname] = useState<string | null>(initialMentorNickname);
@@ -138,6 +140,7 @@ export default function StudentDashboard({
             userId={userId}
             mentorId={mentorId}
             onNoMentor={handleNoMentor}
+            activeCategoryIds={activeCategoryIds}
           />
         </section>
 

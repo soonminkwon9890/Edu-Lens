@@ -85,6 +85,8 @@ interface CategoryGridProps {
   mentorId: string | null;
   /** Called when a launch is attempted but no mentor is set. */
   onNoMentor: () => void;
+  /** Category IDs that already have a non-resolved session (from server). */
+  activeCategoryIds?: string[];
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -93,10 +95,15 @@ export default function CategoryGrid({
   userId,
   mentorId,
   onNoMentor,
+  activeCategoryIds = [],
 }: CategoryGridProps): JSX.Element {
   const [loadingId,    setLoadingId]    = useState<string | null>(null);
   const [launchError,  setLaunchError]  = useState<string | null>(null);
   const [justLaunched, setJustLaunched] = useState<string | null>(null);
+  // Merge server-provided active IDs with any newly launched this session
+  const [localActive,  setLocalActive]  = useState<Set<string>>(
+    () => new Set(activeCategoryIds),
+  );
 
   async function handleLaunch(categoryId: string): Promise<void> {
     // Gate: must have a mentor before launching
@@ -124,7 +131,8 @@ export default function CategoryGrid({
 
       window.location.href = uri;
 
-      // Brief success indicator (the page won't navigate away on custom URI)
+      // Mark as active persistently + show brief launched flash
+      setLocalActive((prev) => new Set(prev).add(categoryId));
       setJustLaunched(categoryId);
       setTimeout(() => setJustLaunched(null), 3000);
     } catch (err) {
@@ -159,23 +167,25 @@ export default function CategoryGrid({
         {CATEGORIES.map((cat) => {
           const isLoading  = loadingId    === cat.id;
           const isLaunched = justLaunched === cat.id;
+          const isActive   = localActive.has(cat.id);
 
           return (
             <button
               key={cat.id}
               type="button"
-              disabled={!!loadingId}
+              disabled={!!loadingId || isActive}
               onClick={() => handleLaunch(cat.id)}
               className={cn(
                 "group relative text-left rounded-2xl border bg-card",
                 "p-5 transition-all duration-200",
                 "hover:-translate-y-0.5 hover:shadow-xl",
                 "active:scale-[0.98] active:translate-y-0",
-                "disabled:pointer-events-none disabled:opacity-60",
+                "disabled:pointer-events-none",
                 "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background",
                 cat.border,
                 cat.shadow,
-                isLaunched && "ring-2 ring-emerald-500/40 border-emerald-500/40",
+                isActive   && "ring-2 ring-emerald-500/40 border-emerald-500/40 opacity-80",
+                !isActive  && "disabled:opacity-60",
               )}
             >
               {/* Gradient background */}
@@ -198,11 +208,15 @@ export default function CategoryGrid({
                   {/* State indicator */}
                   {isLoading ? (
                     <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                  ) : isLaunched ? (
-                    <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5
-                                     text-[10px] font-semibold text-emerald-400
-                                     bg-emerald-500/20 border border-emerald-500/30">
-                      ✓ 실행됨
+                  ) : isActive ? (
+                    <span className={cn(
+                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5",
+                      "text-[10px] font-semibold text-emerald-400",
+                      "bg-emerald-500/20 border border-emerald-500/30",
+                      isLaunched && "animate-pulse",
+                    )}>
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                      실행됨
                     </span>
                   ) : (
                     <span className={cn(

@@ -268,7 +268,7 @@ export default function AdminPage(): JSX.Element {
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background pt-16">
 
       {/* ── Top header bar ── */}
       <div className="border-b border-border bg-card/50 backdrop-blur-sm
