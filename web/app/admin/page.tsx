@@ -102,7 +102,7 @@ export default function AdminPage(): JSX.Element {
   const fetchData = useCallback(async (isInitial = false) => {
     if (isInitial) setLoading(true);
     try {
-      const fetchedSessions = (await fetchInstructorSessions()) as ActiveSession[];
+      const fetchedSessions = (await fetchInstructorSessions()) as unknown as ActiveSession[];
       setSessions(fetchedSessions);
 
       // Flash cards that weren't in the previous poll result.
@@ -115,7 +115,7 @@ export default function AdminPage(): JSX.Element {
 
       if (fetchedSessions.length > 0) {
         const sessionIds = fetchedSessions.map((s) => s.id);
-        const fetchedLogs = (await fetchInstructorLogs(sessionIds)) as PracticeLog[];
+        const fetchedLogs = (await fetchInstructorLogs(sessionIds)) as unknown as PracticeLog[];
         setLogs(fetchedLogs);
 
         // Flash cards whose session received a new log since the last poll.
