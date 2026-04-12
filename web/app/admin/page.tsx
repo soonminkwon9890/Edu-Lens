@@ -342,14 +342,14 @@ export default function AdminPage(): JSX.Element {
         {/* ── Charts ── */}
         <section>
           <SectionHeading
-            label="오류 분석"
-            sub="내 수강생의 최근 7일 오류 빈도 및 유형 분포"
+            label="AI 코파일럿 상호작용"
+            sub="내 수강생의 최근 7일 상호작용 빈도 및 유형 분포"
           />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <ChartCard title="일별 오류 빈도 (최근 7일)">
+            <ChartCard title="일별 상호작용 빈도 (최근 7일)">
               <ErrorLineChart data={lineData} />
             </ChartCard>
-            <ChartCard title="오류 유형 분포">
+            <ChartCard title="상호작용 유형 분포">
               <ErrorPieChart data={pieData} />
             </ChartCard>
           </div>
