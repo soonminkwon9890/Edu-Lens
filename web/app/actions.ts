@@ -134,7 +134,7 @@ export async function resolveSession(sessionId: string): Promise<void> {
   revalidatePath("/");
 }
 
-// ── Admin dashboard data (service-role, bypasses RLS) ────────────────────────
+// ── Admin dashboard data (service-role, bypasses RLS) ───────────────────────
 
 /**
  * Fetch all active_sessions assigned to the authenticated instructor.
@@ -173,6 +173,61 @@ export async function fetchInstructorLogs(
 
   if (error) throw new Error(error.message);
   return (data as Record<string, unknown>[]) ?? [];
+}
+
+/**
+ * Fetch all student profiles assigned to the authenticated instructor.
+ * Queries `profiles` where role = '학생' AND mentor_id = instructorId.
+ */
+export async function fetchInstructorStudents(): Promise<Record<string, unknown>[]> {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  const { data, error } = await supabaseAdmin
+    .from("profiles")
+    .select("id, nickname, role, mentor_id")
+    .eq("role", "학생")
+    .eq("mentor_id", userId)
+    .order("nickname", { ascending: true });
+
+  if (error) throw new Error(error.message);
+  return (data as Record<string, unknown>[]) ?? [];
+}
+
+/**
+ * Fetch all practice_logs for a specific student, including the session's category.
+ * Scoped to the authenticated instructor — returns [] if the student doesn't belong to them.
+ */
+export async function fetchStudentLogs(studentId: string): Promise<Record<string, unknown>[]> {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  // Security: verify the student is assigned to this instructor
+  const { data: profile } = await supabaseAdmin
+    .from("profiles")
+    .select("id")
+    .eq("id", studentId)
+    .eq("mentor_id", userId)
+    .maybeSingle();
+
+  if (!profile) return [];
+
+  const { data, error } = await supabaseAdmin
+    .from("practice_logs")
+    .select("*, active_sessions(category)")
+    .eq("student_id", studentId)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+
+  // Flatten the join: promote active_sessions.category to top-level
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ((data ?? []) as any[]).map((row: any) => {
+    const { active_sessions, ...rest } = row as Record<string, unknown> & {
+      active_sessions: { category: string } | null;
+    };
+    return { ...rest, category: active_sessions?.category ?? "general" };
+  });
 }
 
 // ── Onboarding ────────────────────────────────────────────────────────────────

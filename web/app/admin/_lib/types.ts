@@ -19,10 +19,25 @@ export interface PracticeLog {
   id:             string;
   student_id:     string;
   session_id:     string;
-  error_type:     ErrorType | null;
+  /** Includes legacy English keys (syntax/tool_usage/config) and Korean labels
+   *  (선제적 조언, 질의응답) added after the proactive-logging update. */
+  error_type:     string | null;
   ai_hint:        string | null;
   screenshot_url: string | null;
   created_at:     string; // ISO-8601
+}
+
+/** practice_log row with the parent session's category joined in. */
+export interface PracticeLogWithCategory extends PracticeLog {
+  category: string;
+}
+
+/** A student profile row from the `profiles` table. */
+export interface StudentProfile {
+  id:        string;
+  nickname:  string;
+  role:      string;
+  mentor_id: string | null;
 }
 
 // ── Derived view model ────────────────────────────────────────────────────────

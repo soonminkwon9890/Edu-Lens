@@ -3,22 +3,26 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useUser, RedirectToSignIn, UserButton } from "@clerk/nextjs";
 
-import { fetchInstructorSessions, fetchInstructorLogs } from "@/app/actions";
+import {
+  fetchInstructorSessions,
+  fetchInstructorLogs,
+  fetchInstructorStudents,
+} from "@/app/actions";
 
-import { MetricCard }      from "./_components/MetricCard";
-import { ErrorLineChart }  from "./_components/ErrorLineChart";
-import { ErrorPieChart }   from "./_components/ErrorPieChart";
-import { StudentCard }     from "./_components/StudentCard";
-import { StudentModal }    from "./_components/StudentModal";
+import { MetricCard }           from "./_components/MetricCard";
+import { ErrorLineChart }       from "./_components/ErrorLineChart";
+import { ErrorPieChart }        from "./_components/ErrorPieChart";
+import { StudentDirectoryCard } from "./_components/StudentDirectoryCard";
+import { StudentTimeline }      from "./_components/StudentTimeline";
 
-import type { ActiveSession, PracticeLog, StudentRecord } from "./_lib/types";
-import { buildRecords, buildLineData, buildPieData } from "./_lib/utils";
+import type { ActiveSession, PracticeLog, StudentProfile } from "./_lib/types";
+import { buildLineData, buildPieData } from "./_lib/utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 const FLASH_DURATION_MS = 4000;
 
-// ── Small inline components ──────────────────────────────────────────────────
+// ── Small inline components ───────────────────────────────────────────────────
 
 function LiveDot({ connected }: { connected: boolean }) {
   return (
@@ -60,25 +64,32 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
   );
 }
 
-// ── Main page ────────────────────────────────────────────────────────────────
+// ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function AdminPage(): JSX.Element {
   const { user, isLoaded } = useUser();
 
-  // ── Data state ───────────────────────────────────────────────────────────
-  const [sessions,  setSessions]  = useState<ActiveSession[]>([]);
-  const [logs,      setLogs]      = useState<PracticeLog[]>([]);
-  const [connected, setConnected] = useState(false);
-  const [loading,   setLoading]   = useState(true);
-  const [newIds,    setNewIds]    = useState<Set<string>>(new Set());
-  const [selected,  setSelected]  = useState<StudentRecord | null>(null);
+  // ── Data state ────────────────────────────────────────────────────────────
+  const [sessions,        setSessions]        = useState<ActiveSession[]>([]);
+  const [logs,            setLogs]            = useState<PracticeLog[]>([]);
+  const [studentProfiles, setStudentProfiles] = useState<StudentProfile[]>([]);
+  const [connected,       setConnected]       = useState(false);
+  const [loading,         setLoading]         = useState(true);
 
-  // Track known session IDs so we can flash newly-arrived cards on each poll.
+  /** IDs currently flashing (student IDs for directory card highlight). */
+  const [newIds, setNewIds] = useState<Set<string>>(new Set());
+
+  /** The student whose timeline is currently open; null = show directory. */
+  const [timelineStudent, setTimelineStudent] = useState<{
+    id:       string;
+    nickname: string;
+  } | null>(null);
+
+  // Track seen IDs so we only flash on genuinely new rows.
   const knownSessionIds = useRef<Set<string>>(new Set());
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  /** Flash a card for FLASH_DURATION_MS then remove the glow. */
   const flashId = useCallback((id: string) => {
     setNewIds((prev) => new Set(prev).add(id));
     setTimeout(() => {
@@ -90,42 +101,43 @@ export default function AdminPage(): JSX.Element {
     }, FLASH_DURATION_MS);
   }, []);
 
-
-  // ── Data fetch via Server Actions (bypasses RLS) ─────────────────────────
+  // ── Data fetch (server actions bypass RLS) ────────────────────────────────
   //
-  // The anon Supabase client respects RLS. Because this app uses Clerk (not
-  // Supabase Auth), auth.uid() is always null on the DB side, so RLS blocks
-  // all reads. Server Actions use supabaseAdmin (service role) instead.
-  //
-  // We poll every 30 s as a lightweight realtime substitute.
+  // Uses supabaseAdmin on the server side; polls every 30 s as a lightweight
+  // realtime substitute (Supabase anon client is blocked by RLS because
+  // auth.uid() is always null when using Clerk instead of Supabase Auth).
 
   const fetchData = useCallback(async (isInitial = false) => {
     if (isInitial) setLoading(true);
     try {
+      // 1. Sessions
       const fetchedSessions = (await fetchInstructorSessions()) as unknown as ActiveSession[];
       setSessions(fetchedSessions);
 
-      // Flash cards that weren't in the previous poll result.
       fetchedSessions.forEach((s) => {
         if (!knownSessionIds.current.has(s.id)) {
-          if (!isInitial) flashId(s.id);
+          if (!isInitial) flashId(s.student_id); // flash the student's directory card
           knownSessionIds.current.add(s.id);
         }
       });
 
+      // 2. Logs (scoped to the fetched sessions)
       if (fetchedSessions.length > 0) {
-        const sessionIds = fetchedSessions.map((s) => s.id);
-        const fetchedLogs = (await fetchInstructorLogs(sessionIds)) as unknown as PracticeLog[];
+        const sessionIds    = fetchedSessions.map((s) => s.id);
+        const fetchedLogs   = (await fetchInstructorLogs(sessionIds)) as unknown as PracticeLog[];
         setLogs(fetchedLogs);
 
-        // Flash cards whose session received a new log since the last poll.
         fetchedLogs.forEach((l) => {
           if (!knownSessionIds.current.has(`log-${l.id}`)) {
-            if (!isInitial) flashId(l.session_id);
+            if (!isInitial) flashId(l.student_id);
             knownSessionIds.current.add(`log-${l.id}`);
           }
         });
       }
+
+      // 3. Student profiles (for the directory and the correct student count)
+      const fetchedProfiles = (await fetchInstructorStudents()) as unknown as StudentProfile[];
+      setStudentProfiles(fetchedProfiles);
 
       setConnected(true);
     } catch (err) {
@@ -136,17 +148,16 @@ export default function AdminPage(): JSX.Element {
     }
   }, [flashId]);
 
-  // Initial load + 30-second polling interval.
   useEffect(() => {
     void fetchData(true);
     const interval = setInterval(() => void fetchData(false), 30_000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  // ── Derived data (memoised) ───────────────────────────────────────────────
-  const records   = useMemo(() => buildRecords(sessions, logs),    [sessions, logs]);
-  const lineData  = useMemo(() => buildLineData(logs),              [logs]);
-  const pieData   = useMemo(() => buildPieData(logs),               [logs]);
+  // ── Derived data ──────────────────────────────────────────────────────────
+
+  const lineData = useMemo(() => buildLineData(logs), [logs]);
+  const pieData  = useMemo(() => buildPieData(logs),  [logs]);
 
   const activeSessions = useMemo(
     () => sessions.filter((s) => s.status !== "resolved").length,
@@ -157,10 +168,27 @@ export default function AdminPage(): JSX.Element {
     [sessions],
   );
 
-  const pinnedRecords = records.filter((r) => r.isPinned);
-  const normalRecords = records.filter((r) => !r.isPinned);
+  /** Total interaction count per student_id (derived from fetched logs). */
+  const interactionCountByStudent = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const log of logs) {
+      counts[log.student_id] = (counts[log.student_id] ?? 0) + 1;
+    }
+    return counts;
+  }, [logs]);
 
-  // ── Auth / loading guard ─────────────────────────────────────────────────
+  /** Most recent log timestamp per student_id. */
+  const lastActiveByStudent = useMemo(() => {
+    const times: Record<string, string> = {};
+    for (const log of logs) {
+      if (!times[log.student_id] || log.created_at > times[log.student_id]) {
+        times[log.student_id] = log.created_at;
+      }
+    }
+    return times;
+  }, [logs]);
+
+  // ── Auth / loading guard ──────────────────────────────────────────────────
   if (!isLoaded) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -173,11 +201,11 @@ export default function AdminPage(): JSX.Element {
 
   const displayName = user.firstName ?? user.username ?? "강사";
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-background pt-16">
 
-      {/* ── Top header bar ── */}
+      {/* ── Sticky top header bar ── */}
       <div className="border-b border-border bg-card/50 backdrop-blur-sm
                       sticky top-16 z-20 px-6 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4 flex-wrap">
@@ -203,8 +231,9 @@ export default function AdminPage(): JSX.Element {
                 ⚠ {criticalCount}명 위급
               </span>
             )}
+            {/* Correct count: unique student profiles, not sessions or log rows */}
             <span className="text-xs text-muted-foreground hidden sm:block">
-              수강생 {records.length}명
+              수강생 {loading ? "…" : studentProfiles.length}명
             </span>
             <LiveDot connected={connected} />
             <UserButton afterSignOutUrl="/sign-in" />
@@ -215,7 +244,7 @@ export default function AdminPage(): JSX.Element {
       {/* ── Page body ── */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-10">
 
-        {/* ── Analytics metrics ── */}
+        {/* ── Metrics ── */}
         <section>
           <SectionHeading
             label="학습 현황 요약"
@@ -223,16 +252,16 @@ export default function AdminPage(): JSX.Element {
           />
           <div className="flex gap-4 flex-wrap">
             <MetricCard
-              label="활성 수강생"
-              value={loading ? "…" : activeSessions}
-              sub="현재 세션 진행 중"
+              label="담당 수강생"
+              value={loading ? "…" : studentProfiles.length}
+              sub="프로필 기준 총 인원"
               icon="👥"
               accent="default"
             />
             <MetricCard
-              label="누적 실습 세션"
-              value={loading ? "…" : sessions.length}
-              sub="전체 기간 합산"
+              label="활성 세션"
+              value={loading ? "…" : activeSessions}
+              sub="현재 진행 중"
               icon="📋"
               accent="default"
             />
@@ -262,105 +291,77 @@ export default function AdminPage(): JSX.Element {
           </div>
         </section>
 
-        {/* ── Pinned / critical section ── */}
-        {pinnedRecords.length > 0 && (
-          <section>
-            <div className="flex items-center gap-2 mb-5">
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              <h2 className="text-sm font-bold text-red-400 tracking-widest uppercase">
-                막힘 경보
-              </h2>
-              <span className="text-xs text-muted-foreground ml-1">
-                — 위급 또는 막힘 3회 이상
-              </span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {pinnedRecords.map((r) => (
-                <StudentCard
-                  key={r.session.id}
-                  record={r}
-                  isNew={newIds.has(r.session.id)}
-                  onClick={() => setSelected(r)}
-                />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* ── Divider ── */}
-        {pinnedRecords.length > 0 && normalRecords.length > 0 && (
-          <div className="border-t border-border" />
-        )}
-
-        {/* ── Normal students section ── */}
+        {/* ── Student directory / timeline ── */}
         <section>
-          <div className="flex items-center gap-2 mb-5">
-            <span className="w-2 h-2 rounded-full bg-edu-400" />
-            <h2 className="text-sm font-bold text-muted-foreground tracking-widest uppercase">
-              활성 수강생
-            </h2>
-            {normalRecords.length > 0 && (
-              <span className="text-xs text-muted-foreground ml-1">
-                — {normalRecords.length}개 세션
-              </span>
-            )}
-          </div>
-
-          {loading ? (
-            /* Skeleton grid */
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {[0, 1, 2, 3, 4, 5].map((i) => (
-                <div
-                  key={i}
-                  className="rounded-2xl border border-border bg-card p-4 space-y-3 animate-pulse"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-muted/40" />
-                    <div className="flex-1 space-y-1.5">
-                      <div className="h-3 bg-muted/40 rounded w-3/4" />
-                      <div className="h-2.5 bg-muted/30 rounded w-1/2" />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="h-2.5 bg-muted/30 rounded w-full" />
-                    <div className="h-2.5 bg-muted/30 rounded w-4/5" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : normalRecords.length === 0 && pinnedRecords.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-24 gap-4 text-muted-foreground">
-              <span className="text-5xl opacity-25">📡</span>
-              <p className="text-sm">수강생 활동을 기다리는 중…</p>
-              <LiveDot connected={connected} />
-            </div>
-          ) : normalRecords.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4">
-              모든 활성 수강생이 막힘 경보 구역에 있습니다.
-            </p>
+          {timelineStudent ? (
+            /* ── Individual student timeline ── */
+            <StudentTimeline
+              studentId={timelineStudent.id}
+              nickname={timelineStudent.nickname}
+              onBack={() => setTimelineStudent(null)}
+            />
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {normalRecords.map((r) => (
-                <StudentCard
-                  key={r.session.id}
-                  record={r}
-                  isNew={newIds.has(r.session.id)}
-                  onClick={() => setSelected(r)}
-                />
-              ))}
-            </div>
+            /* ── Student directory grid ── */
+            <>
+              <SectionHeading
+                label="수강생 디렉토리"
+                sub="카드를 클릭하면 해당 수강생의 상호작용 타임라인을 볼 수 있습니다"
+              />
+
+              {loading ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {[0, 1, 2, 3, 4, 5].map((i) => (
+                    <div
+                      key={i}
+                      className="rounded-2xl border border-border bg-card p-4
+                                 space-y-3 animate-pulse"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-muted/40" />
+                        <div className="flex-1 space-y-1.5">
+                          <div className="h-3 bg-muted/40 rounded w-3/4" />
+                          <div className="h-2.5 bg-muted/30 rounded w-1/2" />
+                        </div>
+                        <div className="h-5 w-10 bg-muted/30 rounded-full" />
+                      </div>
+                      <div className="flex justify-between">
+                        <div className="h-2.5 bg-muted/20 rounded w-2/5" />
+                        <div className="h-2.5 bg-muted/20 rounded w-1/4" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : studentProfiles.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-24 gap-4
+                               text-muted-foreground">
+                  <span className="text-5xl opacity-25">📡</span>
+                  <p className="text-sm">아직 배정된 수강생이 없습니다.</p>
+                  <LiveDot connected={connected} />
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {studentProfiles.map((profile) => (
+                    <StudentDirectoryCard
+                      key={profile.id}
+                      profile={profile}
+                      interactionCount={interactionCountByStudent[profile.id] ?? 0}
+                      lastActiveAt={lastActiveByStudent[profile.id] ?? null}
+                      isNew={newIds.has(profile.id)}
+                      onClick={() =>
+                        setTimelineStudent({
+                          id:       profile.id,
+                          nickname: profile.nickname,
+                        })
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </section>
 
       </div>
-
-      {/* ── Detail modal ── */}
-      {selected && (
-        <StudentModal
-          record={selected}
-          onClose={() => setSelected(null)}
-        />
-      )}
     </div>
   );
 }
