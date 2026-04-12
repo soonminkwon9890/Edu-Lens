@@ -177,7 +177,7 @@ export async function fetchInstructorLogs(
 
 /**
  * Fetch all student profiles assigned to the authenticated instructor.
- * Queries `profiles` where role = '학생' AND mentor_id = instructorId.
+ * Queries `profiles` where role = 'student' AND mentor_id = instructorId.
  */
 export async function fetchInstructorStudents(): Promise<Record<string, unknown>[]> {
   const { userId } = await auth();
@@ -186,7 +186,7 @@ export async function fetchInstructorStudents(): Promise<Record<string, unknown>
   const { data, error } = await supabaseAdmin
     .from("profiles")
     .select("id, nickname, role, mentor_id")
-    .eq("role", "학생")
+    .eq("role", "student")
     .eq("mentor_id", userId)
     .order("nickname", { ascending: true });
 

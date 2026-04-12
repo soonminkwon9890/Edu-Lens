@@ -159,14 +159,31 @@ export default function AdminPage(): JSX.Element {
   const lineData = useMemo(() => buildLineData(logs), [logs]);
   const pieData  = useMemo(() => buildPieData(logs),  [logs]);
 
+  /** Sessions with status active | stalled | critical (not resolved). */
   const activeSessions = useMemo(
-    () => sessions.filter((s) => s.status !== "resolved").length,
+    () => sessions.filter((s) =>
+      s.status === "active" || s.status === "stalled" || s.status === "critical"
+    ).length,
     [sessions],
   );
   const criticalCount = useMemo(
     () => sessions.filter((s) => s.status === "critical").length,
     [sessions],
   );
+
+  /**
+   * Set of student IDs that currently have at least one non-resolved session.
+   * Used to show the "에듀렌즈 사용 중" indicator on directory cards.
+   */
+  const activeStudentIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of sessions) {
+      if (s.status === "active" || s.status === "stalled" || s.status === "critical") {
+        ids.add(s.student_id);
+      }
+    }
+    return ids;
+  }, [sessions]);
 
   /** Total interaction count per student_id (derived from fetched logs). */
   const interactionCountByStudent = useMemo(() => {
@@ -347,6 +364,7 @@ export default function AdminPage(): JSX.Element {
                       interactionCount={interactionCountByStudent[profile.id] ?? 0}
                       lastActiveAt={lastActiveByStudent[profile.id] ?? null}
                       isNew={newIds.has(profile.id)}
+                      isSessionActive={activeStudentIds.has(profile.id)}
                       onClick={() =>
                         setTimelineStudent({
                           id:       profile.id,
