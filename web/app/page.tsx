@@ -39,15 +39,14 @@ async function getStudentData(userId: string) {
     (activeSessions as Array<{ category: string }>) ?? []
   ).map((s) => s.category);
 
-  // Fetch recent resolved sessions (last 5)
-  // Join with practice_logs to get the latest error_type per session
+  // Fetch ALL resolved sessions — no limit; the UI groups and scrolls them.
+  // Join with practice_logs to get the latest error_type + ai_hint per session.
   const { data: sessions } = await supabaseAdmin
     .from("active_sessions")
     .select("id, category, status, updated_at")
     .eq("student_id", userId)
     .eq("status", "resolved")
-    .order("updated_at", { ascending: false })
-    .limit(5);
+    .order("updated_at", { ascending: false });
 
   // For each resolved session, grab the latest practice_log's error_type
   const recentSessions: ResolvedSession[] = await Promise.all(
@@ -55,18 +54,20 @@ async function getStudentData(userId: string) {
       .map(async (s) => {
         const { data: log } = await supabaseAdmin
           .from("practice_logs")
-          .select("error_type")
+          .select("error_type, ai_hint")
           .eq("session_id", s.id)
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle();
 
+        const logRow = log as { error_type?: string | null; ai_hint?: string | null } | null;
         return {
           id:         s.id,
           category:   s.category,
           status:     s.status,
           updated_at: s.updated_at,
-          error_type: (log as { error_type?: string | null } | null)?.error_type ?? null,
+          error_type: logRow?.error_type ?? null,
+          ai_hint:    logRow?.ai_hint    ?? null,
         };
       }),
   );

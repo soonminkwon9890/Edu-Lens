@@ -134,6 +134,47 @@ export async function resolveSession(sessionId: string): Promise<void> {
   revalidatePath("/");
 }
 
+// ── Admin dashboard data (service-role, bypasses RLS) ────────────────────────
+
+/**
+ * Fetch all active_sessions assigned to the authenticated instructor.
+ * Uses supabaseAdmin so RLS is bypassed — safe because auth() already gates access.
+ */
+export async function fetchInstructorSessions(): Promise<Record<string, unknown>[]> {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  const { data, error } = await supabaseAdmin
+    .from("active_sessions")
+    .select("*")
+    .eq("mentor_id", userId)
+    .order("started_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return (data as Record<string, unknown>[]) ?? [];
+}
+
+/**
+ * Fetch all practice_logs for the given session IDs.
+ * Must be called after fetchInstructorSessions to scope logs to the instructor.
+ */
+export async function fetchInstructorLogs(
+  sessionIds: string[],
+): Promise<Record<string, unknown>[]> {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+  if (sessionIds.length === 0) return [];
+
+  const { data, error } = await supabaseAdmin
+    .from("practice_logs")
+    .select("*")
+    .in("session_id", sessionIds)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return (data as Record<string, unknown>[]) ?? [];
+}
+
 // ── Onboarding ────────────────────────────────────────────────────────────────
 
 /**

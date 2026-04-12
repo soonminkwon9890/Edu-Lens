@@ -2,9 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useUser, RedirectToSignIn, UserButton } from "@clerk/nextjs";
-import type { RealtimeChannel } from "@supabase/supabase-js";
 
-import { supabase } from "@/lib/supabase";
+import { fetchInstructorSessions, fetchInstructorLogs } from "@/app/actions";
 
 import { MetricCard }      from "./_components/MetricCard";
 import { ErrorLineChart }  from "./_components/ErrorLineChart";
@@ -36,7 +35,7 @@ function LiveDot({ connected }: { connected: boolean }) {
           connected ? "bg-green-400 animate-pulse" : "bg-muted-foreground"
         }`}
       />
-      {connected ? "실시간" : "연결 중…"}
+      {connected ? "자동 갱신 (30s)" : "연결 중…"}
     </span>
   );
 }
@@ -67,16 +66,15 @@ export default function AdminPage(): JSX.Element {
   const { user, isLoaded } = useUser();
 
   // ── Data state ───────────────────────────────────────────────────────────
-  const [sessions,   setSessions]   = useState<ActiveSession[]>([]);
-  const [logs,       setLogs]       = useState<PracticeLog[]>([]);
-  const [connected,  setConnected]  = useState(false);
-  const [loading,    setLoading]    = useState(true);
-  const [newIds,     setNewIds]     = useState<Set<string>>(new Set());
-  const [selected,   setSelected]   = useState<StudentRecord | null>(null);
+  const [sessions,  setSessions]  = useState<ActiveSession[]>([]);
+  const [logs,      setLogs]      = useState<PracticeLog[]>([]);
+  const [connected, setConnected] = useState(false);
+  const [loading,   setLoading]   = useState(true);
+  const [newIds,    setNewIds]    = useState<Set<string>>(new Set());
+  const [selected,  setSelected]  = useState<StudentRecord | null>(null);
 
-  const channelRef = useRef<RealtimeChannel | null>(null);
-
-  const instructorId = user?.id ?? "";
+  // Track known session IDs so we can flash newly-arrived cards on each poll.
+  const knownSessionIds = useRef<Set<string>>(new Set());
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -92,149 +90,58 @@ export default function AdminPage(): JSX.Element {
     }, FLASH_DURATION_MS);
   }, []);
 
-  /** Upsert a session into state. */
-  const upsertSession = useCallback((incoming: ActiveSession) => {
-    setSessions((prev) => {
-      const idx = prev.findIndex((s) => s.id === incoming.id);
-      if (idx === -1) return [incoming, ...prev];
-      const next = [...prev];
-      next[idx] = incoming;
-      return next;
-    });
-  }, []);
 
-  /** Upsert a practice log into state. */
-  const upsertLog = useCallback((incoming: PracticeLog) => {
-    setLogs((prev) => {
-      const idx = prev.findIndex((l) => l.id === incoming.id);
-      if (idx === -1) return [incoming, ...prev];
-      const next = [...prev];
-      next[idx] = incoming;
-      return next;
-    });
-  }, []);
+  // ── Data fetch via Server Actions (bypasses RLS) ─────────────────────────
+  //
+  // The anon Supabase client respects RLS. Because this app uses Clerk (not
+  // Supabase Auth), auth.uid() is always null on the DB side, so RLS blocks
+  // all reads. Server Actions use supabaseAdmin (service role) instead.
+  //
+  // We poll every 30 s as a lightweight realtime substitute.
 
-  // ── Initial data fetch ────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!instructorId) return;
-
-    setLoading(true);
-    (async () => {
-      // 1. Fetch all active_sessions where mentor_id = me
-      const { data: sessionData, error: sessionErr } = await supabase
-        .from("active_sessions")
-        .select("*")
-        .eq("mentor_id", instructorId)
-        .order("started_at", { ascending: false });
-
-      if (sessionErr) {
-        console.error("[Admin] sessions fetch error:", sessionErr.message);
-        setLoading(false);
-        return;
-      }
-
-      const fetchedSessions = (sessionData as ActiveSession[]) ?? [];
+  const fetchData = useCallback(async (isInitial = false) => {
+    if (isInitial) setLoading(true);
+    try {
+      const fetchedSessions = (await fetchInstructorSessions()) as ActiveSession[];
       setSessions(fetchedSessions);
 
-      // 2. Fetch all practice_logs for those sessions
-      if (fetchedSessions.length > 0) {
-        const sessionIds = fetchedSessions.map((s) => s.id);
-        const { data: logData, error: logErr } = await supabase
-          .from("practice_logs")
-          .select("*")
-          .in("session_id", sessionIds)
-          .order("created_at", { ascending: false });
-
-        if (logErr) {
-          console.error("[Admin] logs fetch error:", logErr.message);
-        } else {
-          setLogs((logData as PracticeLog[]) ?? []);
+      // Flash cards that weren't in the previous poll result.
+      fetchedSessions.forEach((s) => {
+        if (!knownSessionIds.current.has(s.id)) {
+          if (!isInitial) flashId(s.id);
+          knownSessionIds.current.add(s.id);
         }
-      }
-
-      setLoading(false);
-    })();
-  }, [instructorId]);
-
-  // ── Realtime subscriptions ────────────────────────────────────────────────
-  useEffect(() => {
-    if (!instructorId) return;
-
-    const channel = supabase
-      .channel(`admin_realtime_${instructorId}`)
-
-      // ── active_sessions changes (filtered server-side) ──────────────────
-      .on(
-        "postgres_changes",
-        {
-          event:  "INSERT",
-          schema: "public",
-          table:  "active_sessions",
-          filter: `mentor_id=eq.${instructorId}`,
-        },
-        (payload) => {
-          const s = payload.new as ActiveSession;
-          upsertSession(s);
-          flashId(s.id);
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event:  "UPDATE",
-          schema: "public",
-          table:  "active_sessions",
-          filter: `mentor_id=eq.${instructorId}`,
-        },
-        (payload) => {
-          upsertSession(payload.new as ActiveSession);
-        },
-      )
-
-      // ── practice_logs changes (filter client-side by known sessions) ────
-      .on(
-        "postgres_changes",
-        {
-          event:  "INSERT",
-          schema: "public",
-          table:  "practice_logs",
-        },
-        (payload) => {
-          const log = payload.new as PracticeLog;
-          // Only keep logs that belong to this instructor's sessions.
-          // We read the current sessions from the ref we keep in sync below.
-          setSessions((currentSessions) => {
-            const mine = currentSessions.some((s) => s.id === log.session_id);
-            if (mine) {
-              upsertLog(log);
-              flashId(log.session_id); // flash the owning card
-            }
-            return currentSessions; // no change to sessions
-          });
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event:  "UPDATE",
-          schema: "public",
-          table:  "practice_logs",
-        },
-        (payload) => {
-          upsertLog(payload.new as PracticeLog);
-        },
-      )
-
-      .subscribe((status: string) => {
-        setConnected(status === "SUBSCRIBED");
       });
 
-    channelRef.current = channel;
+      if (fetchedSessions.length > 0) {
+        const sessionIds = fetchedSessions.map((s) => s.id);
+        const fetchedLogs = (await fetchInstructorLogs(sessionIds)) as PracticeLog[];
+        setLogs(fetchedLogs);
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [instructorId, upsertSession, upsertLog, flashId]);
+        // Flash cards whose session received a new log since the last poll.
+        fetchedLogs.forEach((l) => {
+          if (!knownSessionIds.current.has(`log-${l.id}`)) {
+            if (!isInitial) flashId(l.session_id);
+            knownSessionIds.current.add(`log-${l.id}`);
+          }
+        });
+      }
+
+      setConnected(true);
+    } catch (err) {
+      console.error("[Admin] fetch error:", err);
+      setConnected(false);
+    } finally {
+      if (isInitial) setLoading(false);
+    }
+  }, [flashId]);
+
+  // Initial load + 30-second polling interval.
+  useEffect(() => {
+    void fetchData(true);
+    const interval = setInterval(() => void fetchData(false), 30_000);
+    return () => clearInterval(interval);
+  }, [fetchData]);
 
   // ── Derived data (memoised) ───────────────────────────────────────────────
   const records   = useMemo(() => buildRecords(sessions, logs),    [sessions, logs]);

@@ -290,6 +290,8 @@ export default function WebEduLensCapture({
 
   async function handleProactiveYes(msgId: string) {
     replace(msgId, { answered: true });
+    // Stop the auto-capture loop: user is now in a manual chat session.
+    pauseAutoCapture();
     const prompt = "네, 도와주세요.";
     push({ id: uid(), role: "user", text: prompt });
     await sendManual(prompt);
@@ -340,6 +342,9 @@ export default function WebEduLensCapture({
     }
     setInputText("");
     setIsSending(true);
+    // Stop the auto-capture loop the moment the user manually sends a message.
+    // The interval would otherwise fire mid-conversation and interrupt the flow.
+    if (status === "active") pauseAutoCapture();
     push({ id: uid(), role: "user", text });
     try {
       await sendManual(text);
