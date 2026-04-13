@@ -14,6 +14,9 @@ async function getStudentData(userId: string) {
     .eq("id", userId)
     .maybeSingle();
 
+  // No DB profile means the row was deleted after Clerk auth — re-run onboarding.
+  if (!profile) redirect("/onboarding");
+
   const nickname = (profile as { nickname?: string } | null)?.nickname ?? "학생";
   const mentorId = (profile as { mentor_id?: string | null } | null)?.mentor_id ?? null;
 
