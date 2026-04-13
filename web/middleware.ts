@@ -47,17 +47,14 @@ export default clerkMiddleware((auth, req) => {
   // here with no role set.  Force them through /onboarding before they can
   // access any protected page.
   //
-  // Exception: once onboarding is complete and the JWT has been refreshed,
-  // redirect away from /onboarding so the user doesn't get stuck there.
+  // NOTE: We do NOT redirect users WITH a role away from /onboarding here.
+  // That redirect previously caused an infinite loop when a user's Supabase
+  // profile was deleted: the page-level auth guard sent them to /onboarding,
+  // and this block immediately bounced them back. Instead, app/onboarding/
+  // layout.tsx handles the "already fully onboarded" case server-side by
+  // checking for a valid Supabase profile before rendering the page.
   if (!role && !isOnboardingRoute(req)) {
     return NextResponse.redirect(new URL("/onboarding", req.url));
-  }
-
-  if (role && isOnboardingRoute(req)) {
-    // Already has a role — send to their home page
-    return NextResponse.redirect(
-      new URL(role === "instructor" ? "/admin" : "/", req.url),
-    );
   }
 
   // ── Role-based routing ────────────────────────────────────────────────────

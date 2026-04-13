@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useUser, useClerk, useSession } from "@clerk/nextjs";
+import { useUser, useClerk, useSession, UserButton } from "@clerk/nextjs";
 import { Aperture, Loader2, GraduationCap, Presentation } from "lucide-react";
 import { saveOnboarding } from "@/app/actions";
 
@@ -124,6 +124,11 @@ export default function OnboardingPage(): JSX.Element {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center
                     bg-background px-4 py-16 gap-10">
+
+      {/* ── Top-right account button ──────────────────────────────────────── */}
+      <div className="fixed top-4 right-4 z-50">
+        <UserButton afterSignOutUrl="/sign-in" />
+      </div>
 
       {/* ── Brand ────────────────────────────────────────────────────────── */}
       <div className="text-center space-y-3">
