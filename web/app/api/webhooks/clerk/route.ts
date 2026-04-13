@@ -95,6 +95,5 @@ export async function POST(req: Request): Promise<Response> {
     console.error("[Webhook] Clerk metadata update failed:", err);
   }
 
-  console.log(`[Webhook] Profile created — user=${id}, role=${role}, nickname=${nickname}`);
   return new Response("OK", { status: 200 });
 }

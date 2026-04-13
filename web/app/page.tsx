@@ -40,7 +40,6 @@ async function getStudentData(userId: string) {
   ).map((s) => s.category);
 
   // Fetch ALL resolved sessions — no limit; the UI groups and scrolls them.
-  // Join with practice_logs to get the latest error_type + ai_hint per session.
   const { data: sessions } = await supabaseAdmin
     .from("active_sessions")
     .select("id, category, status, updated_at")
@@ -48,29 +47,43 @@ async function getStudentData(userId: string) {
     .eq("status", "resolved")
     .order("updated_at", { ascending: false });
 
-  // For each resolved session, grab the latest practice_log's error_type
-  const recentSessions: ResolvedSession[] = await Promise.all(
-    ((sessions as Array<{ id: string; category: string; status: string; updated_at: string }>) ?? [])
-      .map(async (s) => {
-        const { data: log } = await supabaseAdmin
-          .from("practice_logs")
-          .select("error_type, ai_hint")
-          .eq("session_id", s.id)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+  const sessionRows =
+    (sessions as Array<{ id: string; category: string; status: string; updated_at: string }>) ?? [];
 
-        const logRow = log as { error_type?: string | null; ai_hint?: string | null } | null;
-        return {
-          id:         s.id,
-          category:   s.category,
-          status:     s.status,
-          updated_at: s.updated_at,
-          error_type: logRow?.error_type ?? null,
-          ai_hint:    logRow?.ai_hint    ?? null,
+  // Single batch query for all practice_logs — replaces the previous N+1 pattern.
+  // Logs are ordered newest-first; we keep only the first log seen per session_id.
+  const latestLogBySession: Record<string, { error_type: string | null; ai_hint: string | null }> = {};
+
+  if (sessionRows.length > 0) {
+    const { data: logs } = await supabaseAdmin
+      .from("practice_logs")
+      .select("session_id, error_type, ai_hint, created_at")
+      .in("session_id", sessionRows.map((s) => s.id))
+      .order("created_at", { ascending: false });
+
+    for (const log of (logs as Array<{
+      session_id: string;
+      error_type: string | null;
+      ai_hint:    string | null;
+      created_at: string;
+    }>) ?? []) {
+      if (!latestLogBySession[log.session_id]) {
+        latestLogBySession[log.session_id] = {
+          error_type: log.error_type,
+          ai_hint:    log.ai_hint,
         };
-      }),
-  );
+      }
+    }
+  }
+
+  const recentSessions: ResolvedSession[] = sessionRows.map((s) => ({
+    id:         s.id,
+    category:   s.category,
+    status:     s.status,
+    updated_at: s.updated_at,
+    error_type: latestLogBySession[s.id]?.error_type ?? null,
+    ai_hint:    latestLogBySession[s.id]?.ai_hint    ?? null,
+  }));
 
   return { nickname, mentorId, mentorNickname, recentSessions, activeCategoryIds };
 }

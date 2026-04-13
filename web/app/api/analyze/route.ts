@@ -331,7 +331,6 @@ async function saveStallEvent(
     .from(LOGS_TABLE)
     .insert({ student_id: studentId, session_id: sessionId, error_type: errorType, ai_hint: aiHint });
 
-  console.log(`[Supabase] Stall logged — student=${studentId}, session=${sessionId}, status=${newStatus}`);
   return newStatus;
 }
 
@@ -345,7 +344,6 @@ async function saveInteractionLog(
     .from(LOGS_TABLE)
     .insert({ student_id: studentId, session_id: sessionId, error_type: errorType, ai_hint: aiHint });
 
-  console.log(`[Supabase] Interaction logged — student=${studentId}, session=${sessionId}, type=${errorType}`);
 }
 
 // ── Request body type ─────────────────────────────────────────────────────────

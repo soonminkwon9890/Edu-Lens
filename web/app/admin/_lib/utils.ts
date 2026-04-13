@@ -1,45 +1,4 @@
-import type { ActiveSession, PracticeLog, StudentRecord, DayCount, TypeSlice } from "./types";
-
-// ── Build StudentRecord list ──────────────────────────────────────────────────
-
-export function buildRecords(
-  sessions: ActiveSession[],
-  logs:     PracticeLog[],
-): StudentRecord[] {
-  const records: StudentRecord[] = sessions.map((session) => {
-    const sessionLogs = logs
-      .filter((l) => l.session_id === session.id)
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-    const stall_count = sessionLogs.filter((l) => l.error_type !== null).length;
-    const isPinned    = session.status === "critical" || stall_count >= 3;
-
-    return {
-      session,
-      logs:       sessionLogs,
-      latest_log: sessionLogs[0] ?? null,
-      stall_count,
-      isPinned,
-    };
-  });
-
-  // Sort: critical → other pinned → stalled → active → resolved
-  return records.sort((a, b) => {
-    const rank = (r: StudentRecord): number => {
-      if (r.session.status === "critical")  return 0;
-      if (r.isPinned)                        return 1;
-      if (r.session.status === "stalled")   return 2;
-      if (r.session.status === "active")    return 3;
-      return 4; // resolved
-    };
-    const d = rank(a) - rank(b);
-    if (d !== 0) return d;
-    // Secondary: most recent activity first
-    const aTime = a.latest_log?.created_at ?? a.session.started_at;
-    const bTime = b.latest_log?.created_at ?? b.session.started_at;
-    return new Date(bTime).getTime() - new Date(aTime).getTime();
-  });
-}
+import type { PracticeLog, DayCount, TypeSlice } from "./types";
 
 // ── Derive chart data ─────────────────────────────────────────────────────────
 

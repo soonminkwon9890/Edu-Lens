@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-/** Shape of every /analyze response from the FastAPI backend. */
+/** Shape of every /analyze response from the Next.js API route. */
 interface ApiResponse {
   success:        boolean;
   response_type:  "error" | "proactive" | "answer";
